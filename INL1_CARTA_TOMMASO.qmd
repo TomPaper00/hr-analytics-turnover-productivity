@@ -1,0 +1,701 @@
+---
+title: "Business Analytics Project: HR Performance & Turnover"
+author: "Carta Tommaso"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+format: pdf
+editor_options: 
+  chunk_output_type: console
+editor: visual
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+## 1 - Introduction
+
+Nowadays companies find themselves in a highly competitive economic context with growing pressure on financial results. Two key elements of a healthy company are usually high productivity and a sustainable level of turnover. Human resource management practices, such as investing in training, reward systems, work environment and internal processes, act as strategic levers for affecting employees' performance and behavior. However, the effectiveness of these practices can vary significantly depending on the industry sector, the structure of the organization, and the characteristics of the workforce.
+
+### 1.1 - Problematization
+
+In this project (seeking to adapt the dataset to a real business case), I take the perspective of a consulting firm that supports companies in various sectors in making more informed, data-driven decisions to optimize their productivity or desired turnover level. The dataset provided allows us to investigate which characteristics are most significant for understanding performance differences between companies and for anticipating the risks of staff turnover. The main purpose of the analysis is to understand how Hr conditions and practices affect a company’s results, with a specific focus on how these effects vary across different sectors. So the important thing is that this is relevant not only for literature on human resource management and organizational performance, but also for defining data-driven development strategies.\
+
+### 1.2 - Research Question
+
+Overarching research question → How do HR practices and conditions influence employee performance and behavior in companies across industries?
+
+Sub question 1 → Which organizational characteristics and HR practices (feature variables) are most closely associated with productivity levels, and how do these relationships vary across industries?
+
+Sub question 2 → Which organizational characteristics and HR practices (feature variables) are most predictive of turnover probability, and do these predictors vary by industry?
+
+### 1.3 - Data Description
+
+To study the relationship between HR practices and organizational outcomes, this work analyzes the dataset provided in the file "case2_dataset.csv"; this dataset is relevant to our research objectives as it captures a multi-dimensional view of company performance, linking financial inputs and structural characteristics to employees.
+
+The dataset contains cross-sectional data on a sample of companies, where each row represents a unique organization identified by an ID. The variables are structured into two distinct groups that directly lead to our research questions:
+
+1.Target Variables: The dataset provides two metrics that may evaluate company success:
+
+-   Target 1: A continuous score representing Productivity (this serves as the dependent variable forr Sub-question 1).
+
+-   Target2: A binary variable representing Turnover (important for Sub-question 2).
+
+2\. Feature Variables: To explain the variation in these outcomes, the dataset includes 9 features (Feature1 through Feature9) covering different  strategic dimensions, such as HR Budget, Reward Systems, Company Size, Internal Processes, Industry Sector, Stress Levels, Education, Average Age, and participation in Skills Development Programs.
+
+## 2 - Exploratory Data Analysis
+
+```{r}
+#| message: false
+#load packages
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(caret)
+library(tinytex)
+library(patchwork)
+library(knitr)
+library(gtsummary)
+
+df <- read.csv("case2_dataset.csv")
+df %>% 
+  head() %>% 
+  dplyr::select(1:6) %>%  #there's no space enough, so just the first 6
+  kable(caption = "Head of df (First 6 columns)")
+```
+
+Here we can see the first 6 columns (there's no space enough, so just the first 6).
+
+### 2.1 - Data cleaning
+
+The first step is to rename the variables and save the changes in a new dataset:
+
+```{r}
+#rename the variables 
+ df %>%
+  rename(
+    productivity="Target1",
+    turnover="Target2",
+    stress="Feature9",
+    industry="Feature8",
+   internal_processes="Feature7",
+    hr_budget="Feature6",
+    reward="Feature5",
+    number_employees="Feature4",
+    education="Feature3",
+    age="Feature2",
+    skills_program="Feature1"
+  ) %>%
+  head() %>%
+  dplyr::select(1:5) %>%  # Correggiamo a 5 per coerenza col titolo
+  kable(
+    caption = "Head of df with renamed variables (First 5 columns)",
+    format = "pipe"
+  )
+#save the changes in a new dataset
+df_clean <- df %>%
+rename(
+    productivity="Target1",
+    turnover="Target2",
+    stress="Feature9",
+    industry="Feature8",
+   internal_processes="Feature7",
+    hr_budget="Feature6",
+    reward="Feature5",
+    number_employees="Feature4",
+    education="Feature3",
+    age="Feature2",
+    skills_program="Feature1"
+  )
+```
+
+Now we convert text strings to factors to ensure R correctly interprets categorical variables and correctly identifies all missing values that might be encoded as strings:
+
+```{r}
+# convert text strings to factors
+
+df_clean <- df_clean %>%
+  mutate(
+    industry = as.factor(industry),
+    education = factor(education, levels = c("Low", "Medium", "High"), ordered = TRUE),
+    stress = factor(stress, levels = c("Low", "Medium", "High"), ordered = TRUE),
+    turnover = as.factor(turnover),
+    skills_program = as.factor(skills_program)
+  )
+
+# results check
+#| echo: false
+#| message: false
+#| warning: false
+
+
+# --- Table 3: Numeric Variables ---
+numeric_stats <- df_clean %>%
+  select(where(is.numeric), -ID) %>% 
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  group_by(Variable) %>%
+  summarise(
+    Min = min(Value, na.rm = TRUE),
+    Median = median(Value, na.rm = TRUE),
+    Mean = round(mean(Value, na.rm = TRUE), 2),
+    Max = max(Value, na.rm = TRUE),
+    `NA's` = sum(is.na(Value))
+  )
+
+kable(numeric_stats, caption = "Descriptive Statistics - Numerical Variables", booktabs = TRUE)
+
+# --- Table 3.1: Categorical variables ---
+cat_stats <- df_clean %>%
+  select(where(is.factor)) %>%
+  # Questo passaggio risolve l'errore: trasforma i fattori in testo prima di unirli
+  mutate(across(everything(), as.character)) %>% 
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Category") %>%
+  group_by(Variable, Category) %>%
+  tally(name = "Count") %>%
+  mutate(Percentage = paste0(round(Count / sum(Count) * 100, 1), "%"))
+
+kable(cat_stats, caption = "Descriptive Statistics - Categorical Variables", booktabs = TRUE)
+
+```
+
+Let's look at the missing values: after applying listwise deletion, all rows with missing data were removed. The final dataset is now composed of 6461 complete observations and 0 missing values, ensuring the consistency of the following analysis.
+
+```{r}
+#| include: false
+
+# Listwise Deletion
+df_clean <- na.omit(df_clean)
+
+# check 
+sum(is.na(df_clean))
+nrow(df_clean)
+```
+
+Now we take a general visual inspection of all quantitative variables through different plots.\
+First, let's take a look on distribution of numerical variables:
+
+```{r}
+library(ggplot2)
+library(patchwork) 
+
+#productivity
+p1 <- ggplot(df_clean, aes(x = productivity)) +
+  geom_histogram(bins = 30, fill = "orange", color = "black") +
+  labs(x = "Productivity", y = "Freq", title = "Target: Productivity") +
+  theme_minimal()
+
+#hr budget
+p2 <- ggplot(df_clean, aes(x = hr_budget)) +
+  geom_histogram(bins = 30, fill = "orange", color = "black") +
+  labs(x = "Budget (k)", y = "Freq", title = "Feature: Budget") +
+  theme_minimal()
+
+#processes
+p3 <- ggplot(df_clean, aes(x = internal_processes)) +
+  geom_histogram(bins = 30, fill = "orange", color = "black") +
+  labs(x = "Processes", y = "Freq", title = "Feature: Processes") +
+  theme_minimal()
+
+#average age
+p4 <- ggplot(df_clean, aes(x = age)) +
+  geom_histogram(bins = 30, fill = "orange", color = "black") +
+  labs(x = "Age", y = "Freq", title = "Feature: Age") +
+  theme_minimal()
+
+#reward
+p5 <- ggplot(df_clean, aes(x = reward)) +
+  geom_histogram(bins = 30, fill = "orange", color = "black") +
+  labs(x = "Reward", y = "Freq", title = "Feature: Reward") +
+  theme_minimal()
+
+#employees
+p6 <- ggplot(df_clean, aes(x = number_employees)) +
+  geom_histogram(bins = 30, fill = "orange", color = "black") +
+  labs(x = "Employees", y = "Freq", title = "Feature: Size") +
+  theme_minimal()
+
+#plot
+(p1 + p2 + p3) / (p4 + p5 + p6)
+```
+
+The variable Productivity shows a clear normal distribution centered around a score of 100. This symmetric shape suggests that there is no accumulation of extremely low or high performers, which supports the use of Linear Regression for our modeling phase. Even Internal Processes, Reward System, and Number of Employees exhibit a typical normal distributions. Meanwhile Reward and Processes are centered around 0, this probably indicate that they are likely standardized indices or comparative scores rather than raw counts. This implies the data is probably well-behaved without significant outliers that could distort the model. The most different is  HR Budget, it deviates from the normal distribution pattern observed in other variables. It displays a multimodal distribution with three distinct peaks (low, medium, and high budget tiers). This shows well that we’re in presence of distinct clusters of companies in terms of financial investment in HR, potentially linked to company size or industry sector (we don’t know yet, but its not the purpose of this analysis to do a cluster analysis).
+
+\
+Now we proceed to plot another infobox in which we analyze the categorical variables to understand the composition of the companies:
+
+```{r}
+#turnover 
+p_turn <- ggplot(df_clean, aes(x = turnover)) +
+  geom_bar(fill = "salmon", color = "black", alpha = 0.8) +
+  labs(title = "Target: Turnover", x = "0=low/medium, 1=high", y = "Count") +
+  theme_minimal()
+
+#iindustry
+p_ind<- ggplot(df_clean, aes(y = industry)) +
+  geom_bar(fill = "steelblue", color = "black", alpha = 0.8) +
+  labs(title = "Feature: Industry Sector", x = "Count", y = "") +
+  theme_minimal()
+
+#stress
+p_stress <- ggplot(df_clean, aes(x = stress)) +
+  geom_bar(fill = "purple", color = "black", alpha = 0.8) +
+  labs(title = "Feature: Stress Level", x = "Stress Category", y = "Count") +
+  theme_minimal()
+
+#skills
+p_skills <- ggplot(df_clean, aes(x = skills_program)) +
+  geom_bar(fill = "lightgreen", color = "black", alpha = 0.8) +
+  labs(title = "Feature: Skills Program", x = "0=Not implemented, 1=implemented", y = "Count") +
+  theme_minimal()
+
+#mix
+(p_turn + p_skills) / (p_ind + p_stress) +
+  plot_annotation(title = 'Baseline Distribution of Categorical Features')
+```
+
+It is unexpected that the target variable Turnover shows that the majority of companies in our sample are classified as having High turnover. Probably turnover is a widespread issue in this specific dataset, rather than a rare anomaly.  
+
+The variable Skills Program is balanced, with an almost 50/50 split between companies that implemented the program and those that did not, so this should provide an interesting basis for comparison to examine the relationship between training, productivity and retention.
+
+For the Industries, IT/Tech represents a smaller portion of the sample, but it still contains over 1,300 observations, so we should have sufficient data to analyze industry-specific trends without risk of sample size bias.  
+
+Regarding Stress Level, the High stress group is the minority. In the upcoming bivariate analysis, it will be interesting to investigate if this specific minority is strongly associated with the high turnover rates observed in the target variable.
+
+Now lets try to give a look at the drivers of productivity:
+
+```{r}
+#different industries and productivity
+bp_ind <- ggplot(df_clean, aes(x = industry, y = productivity, fill = industry)) +
+  geom_boxplot(alpha = 0.7, show.legend = FALSE) +
+  labs(title = "Productivity by Industry", x = "", y = "Score") +
+  theme_minimal()
+
+#stress impact
+bp_stress <- ggplot(df_clean, aes(x = stress, y = productivity, fill = stress)) +
+  geom_boxplot(alpha = 0.7, show.legend = FALSE) +
+  scale_fill_brewer(palette = "Reds") + # Palette rossa per enfatizzare l'allarme stress
+  labs(title = "Productivity by Stress Level", x = "Stress Level", y = "Score") +
+  theme_minimal()
+
+#hr budget impact
+sp_budget <- ggplot(df_clean, aes(x = hr_budget, y = productivity)) +
+  geom_point(alpha = 0.3, color = "darkblue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) + # Aggiunge la linea di tendenza
+  labs(title = "Budget vs Productivity", x = "HR Budget (k)", y = "Score") +
+  theme_minimal()
+
+#reward impact
+sp_reward <- ggplot(df_clean, aes(x = reward, y = productivity)) +
+  geom_point(alpha = 0.3, color = "darkgreen") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(title = "Reward System vs Productivity", x = "Reward Index", y = "Score") +
+  theme_minimal()
+
+#boxplot and scatterplot then
+(bp_ind + bp_stress) / (sp_budget + sp_reward) +
+  plot_annotation(title = 'Drivers of Productivity (Target 1)')
+```
+
+Looking at the HR Budget scatter plot, we observe a distinct lack of a linear relationship. Despite the three tiers of investment (low, medium, high), the red trend line is essentially flat. In this scenario, we do not find evidence that a higher HR budget is associated with higher productivity scores. High-spending companies appear just as likely to have low productivity as low-spending ones. We have a similar scenario for the Reward System vs. Productivity, the plot reveals no observable trend. The distribution appears as a diffuse cloud with a horizontal trend line. This suggests that higher values in the reward system do not correspond to increased employee productivity in this data set.
+
+Now we plot some last information about Turnover drivers:
+
+```{r}
+#dataframe about just companies with high turnove
+df_exits <- subset(df_clean, turnover == "1")
+
+#whats the worst sector
+t_ind <- ggplot(df_exits, aes(y = industry)) +
+  geom_bar(fill = "firebrick", alpha = 0.8) + # Rosso per indicare "allarme"
+  labs(title = "Exits by Industry", x = "Count of High Turnover Cases", y = "") +
+  theme_minimal()
+
+#stress and turnover
+t_stress <- ggplot(df_exits, aes(x = stress)) +
+  geom_bar(fill = "firebrick", alpha = 0.8) +
+  labs(title = "Exits by Stress Level", x = "Stress Level", y = "Count") +
+  theme_minimal()
+
+#shills programm and turnover
+t_skills <- ggplot(df_exits, aes(x = skills_program)) +
+  geom_bar(fill = "firebrick", alpha = 0.8) +
+  labs(title = "Exits by Skills Program", x = "Program Participation (0=No, 1=Yes)", y = "Count") +
+  theme_minimal()
+
+#turnover and education
+t_edu <- ggplot(df_exits, aes(x = education)) +
+  geom_bar(fill = "firebrick", alpha = 0.8) +
+  labs(title = "Exits by Education", x = "Education Level", y = "Count") +
+  theme_minimal()
+
+#final layout
+(t_ind + t_stress) / (t_skills + t_edu) +
+  plot_annotation(title = 'Profile of High Turnover Cases (Target = 1)')
+```
+
+Contrary to expectations, we can say that there's a Skills Program paradox: the bar chart shows that the number of exits is similar among employees who participated in the program compared to those who didn't. Given that participation was evenly split (50/50), this suggests the program is not currently effective as a retention tool (or/and may even increase employees’ external marketability, encouraging them to leave). Similarly, the high absolute number of exits in Manufacturing, Services, and among employees with Medium Education appears to primarily reflect the larger size of these groups within the company, rather than a disproportionately higher turnover risk. Finally, while the Medium stress group accounts for the highest exxit volume, the substantial number of departures among High Stress employees indicates a potentially higher turnover rate among highly stressed employees.
+
+### 2.2 - Data Preparation
+
+Following the Exploratory Data Analysis, we continue to prepare the data for statistical modeling. This involves two steps: standardizing continuous variables to ensure comparability of coefficients, and splitting the data into training and testing sets to evaluate predictive performance on unseen data (as we saw during the course).
+
+### 2.2.1 - Standardization (Z-scores)
+
+To ensure that regression coefficients are comparable and not biased by different units of measurement, all continuous variables were standardized using Z-score scaling. As shown in Table 5, all transformed variables now share a mean of 0 and a standard deviation of 1:
+
+```{r}
+#standardization and creation of new colums with suffix 'z'
+
+df_clean <- df_clean %>%
+  mutate(
+    age_z                = as.numeric(scale(age)),
+    number_employees_z   = as.numeric(scale(number_employees)),
+    hr_budget_z          = as.numeric(scale(hr_budget)),
+    reward_z             = as.numeric(scale(reward)),
+    internal_processes_z = as.numeric(scale(internal_processes))
+  )
+
+# new compact table
+verification_table <- df_clean %>%
+  select(ends_with("_z")) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  group_by(Variable) %>%
+  summarise(
+    Mean = round(mean(Value), 0),
+    SD = round(sd(Value), 0)
+  )
+# --- Table 4: Verification of Z-score Standardization ---
+kable(verification_table, 
+      caption = "Verification of Z-score Standardization (Target: Mean=0, SD=1)",
+      booktabs = TRUE)
+```
+
+### 2.2.2 - Split train/test data
+
+In this phase we adopt 70/30 split data strategy. We create specific partitions for each target variable to try to ensure balance distribution:
+
+```{r}
+set.seed(123) 
+
+#split for productivity
+train_index_prod <- createDataPartition(
+  df_clean$productivity,
+  p = 0.7,
+  list = FALSE
+)
+train_prod <- df_clean[train_index_prod, ]
+test_prod  <- df_clean[-train_index_prod, ]
+
+#data split for turnover
+train_index_turn <- createDataPartition(
+  df_clean$turnover,
+  p = 0.7,
+  list = FALSE
+)
+train_turn <- df_clean[train_index_turn, ]
+test_turn  <- df_clean[-train_index_turn, ]
+
+#check
+print(paste("Training Set Size:", nrow(train_prod)))
+print(paste("Test Set Size:", nrow(test_prod)))
+```
+
+## 3 - Modelling phase
+
+### 3.1 - Regression analysis - sub-question 1
+
+We now transition from visual exploration to statistical modeling. In line with the course philosophy, we adopt an iterative and exploratory modeling strategy, rather than relying on a single specification.\
+Our goal is not to identify a “true” model, but to compare alternative perspectives on the drivers of productivity and assess their explanatory and predictive performance
+
+To this end, we estimate several competing linear regression models, each reflecting a different modeling logic.
+
+A\) Full Model: this one includes all available organizational and HR-related features.\
+Its purpose is twofold: to establish a baseline level of model fit; and to observe how each variable behaves when all other factors are controlled for.
+
+B\) Theory Model: this model focuses exclusively on variables that represent potentially actionable HR levers, such as: HR Budget ; Reward Systems; Internal Processes ;Skills Development.\
+Demographic and structural controls (e.g. Age, Industry) are excluded in this specification to address a specific managerial question: “To what extent can productivity be explained using only variables that management can directly influence?”
+
+C\) Parsimoniuous Model: explores a more parsimonious specification, emphasizing organizational structure and workplace conditions, including: internal Processes, Stress, Age, Industry. This model is motivated by exploratory evidence suggesting that productivity may be more closely related to structural and organizational factors than to direct financial inputs.\
+Here we're not just excluding variables based on statistical significance alone, the aim is to test whether a simpler structural model can achieve comparable explanatory or predictive performance.
+
+```{r}
+#full model
+m_full <- lm(productivity ~ hr_budget_z + 
+                            reward_z + 
+                            internal_processes_z + 
+                            skills_program + 
+                            stress + 
+                            number_employees_z + 
+                            age_z + 
+                            industry + 
+                            education, 
+             data = train_prod)
+
+# theory model
+m_theory <- lm(productivity ~ hr_budget_z + 
+                              reward_z + 
+                              internal_processes_z + 
+                              skills_program, 
+               data = train_prod)
+
+#Parsimonious model 
+m_parsimonious <- lm(productivity ~ internal_processes_z + 
+                                    stress + 
+                                    age_z + 
+                                    industry, 
+                     data = train_prod)
+
+
+# now lets compare the Adjusted R-squared  
+adj_r2 <- data.frame(
+  Model = c("Model A (Full)", "Model B (Theory)", "Model C (Parsimonious)"),
+  Adj_R2 = c(summary(m_full)$adj.r.squared, 
+             summary(m_theory)$adj.r.squared, 
+             summary(m_parsimonious)$adj.r.squared)
+)
+
+knitr::kable(adj_r2, digits = 3, caption = "Explanatory Power (Training Data)")
+```
+
+To determine which perspective serves us best in a business real-world scenario, we evaluate how well each model predicts productivity on the unseen test set data. We use the RMSE as our metric (lower values indicate better predictions):
+
+```{r}
+
+#predictions
+test_prod$pred_full <- predict(m_full, newdata = test_prod)
+test_prod$pred_theory <- predict(m_theory, newdata = test_prod)
+test_prod$pred_parsimonious <- predict(m_parsimonious, newdata = test_prod)
+
+#rmse
+rmse_calc <- function(actual, predicted) {
+  sqrt(mean((actual - predicted)^2))
+}
+
+rmse_full <- rmse_calc(test_prod$productivity, test_prod$pred_full)
+rmse_theory <- rmse_calc(test_prod$productivity, test_prod$pred_theory)
+rmse_parsimonious <- rmse_calc(test_prod$productivity, test_prod$pred_parsimonious)
+
+#final table comparison
+results_table <- data.frame(
+  Model = c("Model A (Full)", "Model B (Theory)", "Model C (Parsimonious)"),
+  Focus = c("All Factors", "Actionable Levers", "Structure & Conditions"),
+  RMSE_Test = c(rmse_full, rmse_theory, rmse_parsimonious)
+)
+
+knitr::kable(results_table, digits = 2, caption = "Predictive Performance on Test Data (RMSE)")
+```
+
+As a consulting firm, we analyzed this dataset to inform evidence-based recommendations for client companies aiming to improve employee productivity. The results show that the traditional organizational levers included in the analysis (HR budget, reward systems, and training) have a very limited ability to explain or predict productivity outcomes. The consistently low R\^2, high prediction errors, and the absence of meaningful performance differences between simpler and more complex models suggest that increasing investment in these areas, if guided solely by these variables, is unlikely to generate predictable productivity gains. These findings indicate that productivity is largely driven by factors not captured in the available data, such as leadership quality, individual capabilities, employee engagement, or contextual and market conditions. Consequently, we recommend that companies complement structural HR investments with more granular, data-driven diagnostics focused on these dimensions, using qualitative insights, behavioral metrics, and alternative analytical approaches to design more effective productivity improvement strategies.
+
+### 3.1 - Logistic regression - sub-question 2
+
+Here, our goal is to identify which factors best predict the probability of a company has high turnover (1). Since the target variable is binary (0 = low/medium, 1 = High), we perform a Logistic Regression algorithms. Consistent with our exploratory approach, we will compare three competing models to test different hypotheses about retention drivers:
+
+A\) Full Model: The baseline model including all available features. This allows us to control for all variables simultaneously and establish a benchmark for predictive accuracy.
+
+B\) Retention Levers Model: This one focuses on the variables traditionally used by HR to retain talent: HR Budget, Reward Systems, Skills Development, and Internal Processes. Here we try to test the hypothesis: “Can we predict turnover solely based on company investments and incentive programs?”
+
+C\) Risk & Structure Model: Based on our EDA, which highlighted high turnover counts among stressed employees and specific industries, this model focuses on "Risk Factors": Stress Level, Industry, and Age. So basically here we try to understand if turnover is primarily driven by burnout and structural conditions (rather than a lack of financial rewards).
+
+```{r}
+#full general model
+m_turn_full <- glm(turnover ~ hr_budget_z + 
+                              reward_z + 
+                              internal_processes_z + 
+                              skills_program + 
+                              stress + 
+                              number_employees_z + 
+                              age_z + 
+                              industry + 
+                              education, 
+                   data = train_turn, 
+                   family = binomial)
+
+#retention levers 
+m_turn_levers <- glm(turnover ~ hr_budget_z + 
+                                reward_z + 
+                                internal_processes_z + 
+                                skills_program, 
+                     data = train_turn, 
+                     family = binomial)
+
+#risk model
+m_turn_risk <- glm(turnover ~ stress + 
+                              industry + 
+                              age_z, 
+                   data = train_turn, 
+                   family = binomial)
+
+
+##model quality
+aic_table <- data.frame(
+  Model = c("(FUll model)", "(Retention Levers)", " (Risk/Structure)"),
+  Focus = c("All Factors", "Investments (Money/Training)", "Burnout & Demographics"),
+  AIC = c(summary(m_turn_full)$aic, 
+          summary(m_turn_levers)$aic, 
+          summary(m_turn_risk)$aic)
+)
+
+knitr::kable(aic_table, digits = 1, caption = "Model Quality Comparison (AIC - Lower is Better)")
+```
+
+Now, we cannot use RMSE (since the outcome is 0 or 1), so, to evaluate the models on the Test Set, we calculate the Accuracy (the percentage of correct predictions). We use a probability threshold of 0.5 (e.g. if probability \> 50%, we predict "Low/Medium")
+
+```{r}
+#probabilities
+test_turn$prob_full <- predict(m_turn_full, newdata = test_turn, type = "response")
+test_turn$prob_levers <- predict(m_turn_levers, newdata = test_turn, type = "response")
+test_turn$prob_risk <- predict(m_turn_risk, newdata = test_turn, type = "response")
+
+
+#accuracy
+calc_accuracy <- function(actual, probabilities, threshold = 0.5) {
+  predicted_class <- ifelse(probabilities > threshold, "1", "0")
+  mean(predicted_class == actual)
+}
+
+acc_full <- calc_accuracy(test_turn$turnover, test_turn$prob_full)
+acc_levers <- calc_accuracy(test_turn$turnover, test_turn$prob_levers)
+acc_risk <- calc_accuracy(test_turn$turnover, test_turn$prob_risk)
+
+#comparison table
+acc_results <- data.frame(
+  Model = c("(Full)", "(Retention Levers)", "(Risk/Structure)"),
+  Accuracy = c(acc_full, acc_levers, acc_risk)
+)
+
+# conversion to percentage for readability
+acc_results$Accuracy_Pct <- paste0(round(acc_results$Accuracy * 100, 2), "%")
+
+knitr::kable(acc_results[, c("Model", "Accuracy_Pct")], caption = "Predictive Accuracy on Test Data")
+```
+
+As we can see in the following plot the wide dispersion around the diagonal illustrates the difficulty of predicting turnover using the available variables.
+
+```{r}
+#modek performance
+plot_data_prod <- test_prod %>%
+  select(productivity, pred_full, pred_theory, pred_parsimonious) %>%
+  pivot_longer(
+    cols = starts_with("pred"), 
+    names_to = "Model_Type", 
+    values_to = "Predicted_Score"
+  ) %>%
+  mutate(
+    # Rinominiamo per chiarezza nella legenda
+    Model_Type = case_when(
+      Model_Type == "pred_full" ~ "(Full)",
+      Model_Type == "pred_theory" ~ "(Theory)",
+      Model_Type == "pred_parsimonious" ~ "(Parsimonious)"
+    )
+  )
+
+#lets plot
+ggplot(plot_data_prod, aes(x = Predicted_Score, y = productivity)) +
+  # Disegniamo i punti (con trasparenza per vedere la densità)
+  geom_point(aes(color = Model_Type), alpha = 0.4, show.legend = FALSE) +
+  # Aggiungiamo la linea di perfezione (y = x)
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  # Dividiamo in 3 pannelli
+  facet_wrap(~Model_Type) +
+  labs(
+    title = "Prediction Accuracy: Reality vs Model",
+    subtitle = "Points closer to the red dashed line indicate better predictions.",
+    x = "Predicted Productivity",
+    y = "Actual Productivity"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
+```
+
+```{r}
+#model separation power
+plot_data <- test_turn %>%
+  select(turnover, prob_full, prob_levers, prob_risk) %>%
+  pivot_longer(
+    cols = starts_with("prob"), 
+    names_to = "Model", 
+    values_to = "Probability"
+  ) %>%
+  mutate(
+    
+    Model = case_when(
+      Model == "prob_full" ~ "(Full)",
+      Model == "prob_levers" ~ "(Levers)",
+      Model == "prob_risk" ~ "(Risk)"
+    )
+  )
+
+#boxplot
+ggplot(plot_data, aes(x = Model, y = Probability, fill = turnover)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("steelblue", "firebrick"), 
+                    labels = c("Stayed (0)", "Left (1)")) +
+  labs(
+    title = "Model Separation Ability",
+    subtitle = "Ideally, 'Left' (Red) should be high and 'Stayed' (Blue) should be low.",
+    x = "",
+    y = "Predicted Probability of Leaving",
+    fill = "Actual Outcome"
+  ) +
+  theme_minimal()
+```
+
+Before the final comments on the models, lets see how it differs from different industry:
+
+```{r}
+#industry risk profile
+
+ggplot(test_turn, aes(x = industry, y = prob_risk, fill = industry)) +
+  geom_boxplot(alpha = 0.7, show.legend = FALSE) +
+  labs(
+    title = "Turnover Risk by Industry (Model C Predictions)",
+    subtitle = "Which sector has the highest Probability of Attrition?",
+    x = "",
+    y = "Predicted Probability (0-1)"
+  ) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+```
+
+As we can see, there's no big difference between industries.
+
+The comparison of the three logistic regression models provides insights into how different perspectives capture turnover risk within the observed data.
+
+The Retention Levers Model, that focuses on variables like HR budget, reward systems, training programs, and internal processes, shows limited predictive performance and does not outperform a naïve baseline. We can say that within this dataset, these variables alone provide limited information for distinguishing between high- and low-turnover firms.
+
+The second model, the Risk & Structure Model, emphasizing stress levels, industry, and age, achieves predictive performance comparable to the full specification, while relying on a more parsimonious set of variables. This might show that turnover risk in this sample is more closely associated with demographic and structural conditions than with direct financial or incentive-based HR practices.
+
+It's important to underline that the full model only modestly improves upon the baseline, showing that a substantial portion of turnover variation remains unexplained.
+
+From those data we may think that that turnover is influenced by complex and partially unobserved factors.
+
+Last but not least, these findings should be interpreted as exploratory associations, not as causal evidence. They do not imply that HR investments are ineffective, but rather that their impact may depend on contextual or unobserved factors we didn't captured in the available data.
+
+## 4 - My View on Analysis
+
+From our perspective as a consulting firm, analytical work should be understood as a decision-support process rather than a tool for producing definitive answers. In applied organizational contexts, data rarely offer clear causal signals,mainly the purpose of the analysis is instead to structure uncertainty and identify which narratives are supported (or not) by the available evidence. In this project, the limited explanatory and predictive power of both productivity and turnover models reinforces the idea that commonly used HR levers cannot be evaluated in isolation or treated as universally effective solutions. Rather than interpreting weak model performance as a failure of the analysis, we see it as an informative outcome that redirects attention toward unobserved, contextual, and qualitative dimensions of organizational performance.
+
+As stated before, our apprroach to analysis is iterative, comparative, and exploratory: we use multiple models and cautious interpretation to surface patterns, assess them, and define where deeper investigation is needed. For client companies, this means that analytics should be integrated with domain knowledge, qualitative diagnostics, and organizational context, enabling more targeted and realistic interventions instead of one-size-fits-all prescriptions based solely on observable quantitative indicators.
+
+## 5 - References
+
+**Course Materials & Methodology**
+
+Business Analytics Course Kompendium_FOA197_part1.qmd & laboratory guidelines \[Malardalen University\]. (This material was used as the primary guideline for the methodological approach, for the EDA structure and the overall iterative modeling strategy).
+
+**Data Source**
+
+Case Study 2 Dataset: HR Analytics \[case2_dataset.csv\]. Retrieved from Canvas.
+
+**Software & Packages** All statistical analyses were performed using R Statistical Software (v4.x.x). The following R packages were utilized for data manipulation, visualization, and modeling:
+
+**R Core Team** (2024). R: A language and environment for statistical computing. R Foundation for Statistical Computing, Vienna, Austria. URL <https://www.R-project.org/>.
+
+**Wickham, H.** (2016). ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York. (Used for visual exploration).
+
+**Kuhn, M.** (2008). Building Predictive Models in R Using the caret Package. Journal of Statistical Software. (Used for data partitioning and training).
+
+**Wickham, H., et al.** (2019). Welcome to the Tidyverse. Journal of Open Source Software. (Used for data cleaning and manipulation).
+
+**Pedersen, T.** (2020). patchwork: The Composer of Plots. (Used for combining visualizations).
